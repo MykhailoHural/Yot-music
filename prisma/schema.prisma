@@ -1,0 +1,177 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// --- NextAuth Models ---
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// --- Application Models ---
+
+model User {
+  id                 String   @id @default(cuid())
+  email              String   @unique
+  name               String?
+  image              String?
+  createdAt          DateTime @default(now())
+
+  // OAuth tokens — зашифровані! (will be stored in Account but keeping schema logic)
+  ytAccessToken      String?  @db.Text
+  ytRefreshToken     String?  @db.Text
+  ytTokenExpiresAt   DateTime?
+
+  accounts           Account[]
+  sessions           Session[]
+  playlists          Playlist[]
+  tracks             Track[]
+  generatedPlaylists GeneratedPlaylist[]
+}
+
+// Плейлист, який ми витягли з YouTube користувача
+model Playlist {
+  id              Int       @id @default(autoincrement())
+  userId          String
+  ytPlaylistId    String                                  // YouTube playlist ID
+  title           String
+  description     String?
+  itemCount       Int                                     // скільки треків було на момент екстракту
+  extractedAt     DateTime  @default(now())
+  fullyExtracted  Boolean   @default(false)               // всі треки витягнуті? (resumability)
+  lastSeenAt      DateTime  @default(now())               // soft-delete: stale якщо < поточного extractedAt
+
+  user            User      @relation(fields: [userId], references: [id])
+  items           PlaylistItem[]
+
+  @@unique([userId, ytPlaylistId])
+}
+
+// Унікальний трек (один трек = одна YouTube video). Дедуплікація по ytVideoId.
+model Track {
+  id              Int       @id @default(autoincrement())
+  userId          String
+  ytVideoId       String                                  // YouTube video ID
+  title           String                                  // raw title з YouTube
+  channelTitle    String                                  // raw channel name
+  durationSec     Int?
+  ytCategoryId    String?                                 // "10" = Music (для filter non-music)
+
+  // Парсингом title:
+  parsedArtist    String?
+  parsedSong      String?
+  parseConfidence Float?                                  // 0..1, як впевнені у парсингу
+  parsedByAi      Boolean   @default(false)               // якщо confidence < 0.5 — fallback на AI
+
+  user            User      @relation(fields: [userId], references: [id])
+  enrichment      TrackEnrichment?
+  genres          TrackGenre[]
+  playlistItems   PlaylistItem[]
+
+  @@unique([userId, ytVideoId])
+  @@index([userId])
+}
+
+// Зв'язок many-to-many: один трек у багатьох плейлистах
+model PlaylistItem {
+  id          Int       @id @default(autoincrement())
+  playlistId  Int
+  trackId     Int
+  position    Int
+
+  playlist    Playlist  @relation(fields: [playlistId], references: [id])
+  track       Track     @relation(fields: [trackId], references: [id])
+
+  @@unique([playlistId, trackId])
+}
+
+// Збагачені дані з зовнішніх джерел
+model TrackEnrichment {
+  id                Int       @id @default(autoincrement())
+  trackId           Int       @unique
+
+  spotifyTrackId    String?
+  spotifyArtistId   String?
+  spotifyGenres     String[]                            // ["indie rock", "alternative"]
+  spotifyMatched    Boolean   @default(false)
+
+  lastfmTopTags     String[]                            // ["dreampop", "shoegaze", "2010s"]
+  lastfmMatched     Boolean   @default(false)
+
+  enrichedAt        DateTime  @default(now())
+
+  track             Track     @relation(fields: [trackId], references: [id])
+}
+
+// Жанри присвоєні AI. Один трек → 1..5 жанрів.
+model TrackGenre {
+  id            Int      @id @default(autoincrement())
+  trackId       Int
+  genre         String                                  // з контрольованої таксономії
+  confidence    Float                                   // 0..1
+  isPrimary     Boolean  @default(false)                // основний жанр (один на трек)
+  classifiedAt  DateTime @default(now())
+  modelUsed     String                                  // "claude-sonnet-4-6"
+
+  track         Track    @relation(fields: [trackId], references: [id])
+
+  @@unique([trackId, genre])
+  @@index([genre])
+}
+
+// Створені нами плейлисти на YouTube (для аудиту + resumability)
+model GeneratedPlaylist {
+  id                Int      @id @default(autoincrement())
+  userId            String
+  ytPlaylistId      String                                 // ID створеного плейлиста на YT
+  title             String                                 // "🎵 Indie Rock (Auto)"
+  genre             String
+  trackCount        Int                                    // скільки повинно бути
+  tracksAdded       Int      @default(0)                   // скільки реально додано (для resume після quota exhaustion)
+  isComplete        Boolean  @default(false)               // всі треки додані?
+  createdAt         DateTime @default(now())
+  lastUpdatedAt     DateTime @updatedAt
+
+  user              User     @relation(fields: [userId], references: [id])
+
+  @@unique([userId, ytPlaylistId])
+  @@index([userId, isComplete])
+}
