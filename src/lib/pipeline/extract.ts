@@ -1,6 +1,7 @@
 import { youtube_v3 } from 'googleapis';
 import { getYoutubeClient } from '../youtube';
 import { prisma } from '../prisma';
+import { parseDuration } from '../duration';
 
 export async function extractUserPlaylists(userId: string) {
   const yt = await getYoutubeClient(userId);
@@ -146,10 +147,3 @@ export async function extractUserPlaylists(userId: string) {
 }
 
 // ISO 8601 duration to seconds (PT3M45S -> 225)
-function parseDuration(iso?: string | null): number | null {
-  if (!iso) return null;
-  const match = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
-  if (!match) return null;
-  const [, h, m, s] = match;
-  return (Number(h ?? 0) * 3600) + (Number(m ?? 0) * 60) + Number(s ?? 0);
-}

@@ -9,7 +9,7 @@ const DAILY_QUOTA_BUDGET = 6000;
 const QUOTA_PER_PLAYLIST_INSERT = 50;
 const QUOTA_PER_ITEM_INSERT = 50;
 
-export async function createGenrePlaylists(userId: string, genres: string[]) {
+export async function createGenrePlaylists(userId: string, genres: string[], maxTracksPerPlaylist = 100) {
   const yt = await getYoutubeClient(userId);
   let quotaUsed = 0;
 
@@ -19,6 +19,7 @@ export async function createGenrePlaylists(userId: string, genres: string[]) {
       where: { genre, track: { userId } },
       include: { track: true },
       orderBy: { confidence: 'desc' },
+      take: maxTracksPerPlaylist,
     });
     return { genre, tracks: trackGenres };
   }));
